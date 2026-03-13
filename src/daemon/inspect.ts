@@ -63,7 +63,8 @@ function detectMarker(content: string): Marker | null {
 }
 
 function detectMarkerLineWithGateway(contents: string): Marker | null {
-  const lower = contents.toLowerCase();
+  // Join line continuations (trailing backslash) into single lines
+  const lower = contents.replace(/\\\r?\n\s*/g, " ").toLowerCase();
   for (const line of lower.split(/\r?\n/)) {
     if (!line.includes("gateway")) {
       continue;

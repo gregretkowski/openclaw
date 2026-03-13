@@ -1,4 +1,4 @@
-import path from "node:path";
+import { posix as path } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findExtraGatewayServices } from "./inspect.js";
 
@@ -205,7 +205,7 @@ WantedBy=default.target
     expect(result).toEqual([]);
   });
 
-  it("deduplicates when the same unit appears in multiple scanned dirs (deep mode)", async () => {
+  it("keeps separate entries for the same unit filename appearing in different scanned dirs (deep mode)", async () => {
     const SYSTEM_DIR = "/etc/systemd/system";
     const contents = `\
 [Unit]
