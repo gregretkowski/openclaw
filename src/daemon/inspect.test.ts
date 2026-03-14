@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findExtraGatewayServices } from "./inspect.js";
@@ -10,32 +11,18 @@ vi.mock("./schtasks-exec.js", () => ({
   execSchtasks: (...args: unknown[]) => execSchtasksMock(...args),
 }));
 
-// Virtual filesystem for fs/promises mocks used by the linux/darwin tests.
-const fsState = vi.hoisted(() => ({
-  files: new Map<string, string>(),
-}));
-
-vi.mock("node:fs/promises", () => {
-  const readdir = vi.fn(async (dir: string) => {
-    const prefix = dir.endsWith(path.sep) ? dir : dir + path.sep;
-    const names: string[] = [];
-    for (const key of fsState.files.keys()) {
-      const rest = key.slice(prefix.length);
-      if (key.startsWith(prefix) && !rest.includes(path.sep)) {
-        names.push(rest);
-      }
-    }
-    return names;
-  });
-  const readFile = vi.fn(async (filePath: string, _enc: string) => {
-    const contents = fsState.files.get(String(filePath));
-    if (contents === undefined) {
-      throw Object.assign(new Error(`ENOENT: ${filePath}`), { code: "ENOENT" });
-    }
-    return contents;
-  });
-  return { default: { readdir, readFile }, readdir, readFile };
-});
+function pathLikeToString(p: unknown): string {
+  if (typeof p === "string") {
+    return p;
+  }
+  if (p instanceof URL) {
+    return p.pathname;
+  }
+  if (p instanceof Uint8Array) {
+    return Buffer.from(p).toString("utf8");
+  }
+  return "";
+}
 
 // Real content from the openclaw-gateway.service unit file (the canonical gateway unit).
 const GATEWAY_SERVICE_CONTENTS = `\
@@ -85,6 +72,7 @@ describe("findExtraGatewayServices (linux / scanSystemdDir)", () => {
   const HOME = "/home/testuser";
   const USER_SYSTEMD_DIR = path.join(HOME, ".config", "systemd", "user");
   let originalPlatform: string;
+  let files: Map<string, string>;
 
   beforeEach(() => {
     originalPlatform = process.platform;
@@ -92,10 +80,33 @@ describe("findExtraGatewayServices (linux / scanSystemdDir)", () => {
       configurable: true,
       value: "linux",
     });
-    fsState.files.clear();
+    files = new Map();
+    vi.spyOn(fs, "readdir").mockImplementation(async (dir) => {
+      const prefix = pathLikeToString(dir);
+      const withSep = prefix.endsWith(path.sep) ? prefix : prefix + path.sep;
+      const names: string[] = [];
+      for (const key of files.keys()) {
+        const rest = key.slice(withSep.length);
+        if (key.startsWith(withSep) && !rest.includes(path.sep)) {
+          names.push(rest);
+        }
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return names as any;
+    });
+    vi.spyOn(fs, "readFile").mockImplementation(async (filePath) => {
+      const p = pathLikeToString(filePath);
+      const contents = files.get(p);
+      if (contents === undefined) {
+        throw Object.assign(new Error(`ENOENT: ${p}`), { code: "ENOENT" });
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return contents as any;
+    });
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     Object.defineProperty(process, "platform", {
       configurable: true,
       value: originalPlatform,
@@ -103,7 +114,7 @@ describe("findExtraGatewayServices (linux / scanSystemdDir)", () => {
   });
 
   function addUnit(name: string, contents: string, dir = USER_SYSTEMD_DIR) {
-    fsState.files.set(path.join(dir, name), contents);
+    files.set(path.join(dir, name), contents);
   }
 
   it("returns empty results when the systemd user dir is empty", async () => {
